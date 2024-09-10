@@ -46,7 +46,7 @@ def translate_to_world(points:np.ndarray,position:np.ndarray,rotation:np.ndarray
     world_points = np.matmul(extrinsic,np.concatenate((points,np.ones((points.shape[0],1))),axis=-1).T).T
     return world_points[:,0:3]
 
-def random_pixel_goal(habitat_config,habitat_env, difficulty='medium'):
+def random_pixel_goal(habitat_config, habitat_env):
     camera_int = habitat_camera_intrinsic(habitat_config)
     robot_pos = habitat_env.sim.get_agent_state().position
     robot_rot = habitat_env.sim.get_agent_state().rotation
@@ -57,7 +57,9 @@ def random_pixel_goal(habitat_config,habitat_env, difficulty='medium'):
     depth = camera_obs['depth']
     xs, zs, rgb_points, rgb_colors = get_pointcloud_from_depth(rgb, depth, camera_int)
     rgb_points = translate_to_world(rgb_points,camera_pos,quaternion.as_rotation_matrix(camera_rot))
-    condition_index = np.where((rgb_points[:,1] < robot_pos[1] + 1.0) & (rgb_points[:,1] > robot_pos[1] - 0.2) & (depth[(zs,xs)][:,0] > 3.0) & (depth[(zs,xs)][:,0] < 5.0))[0]
+    # condition_index = np.where((rgb_points[:,1] < robot_pos[1] + 1.0) & (rgb_points[:,1] > robot_pos[1] - 0.2) & (depth[(zs,xs)][:,0] > 3.0) & (depth[(zs,xs)][:,0] < 5.0))[0]
+    condition_index = np.where((rgb_points[:,1] < robot_pos[1] + 1.0) & (rgb_points[:,1] > robot_pos[1] - 0.5) & (depth[(zs,xs)][:,0] > 3.0) & (depth[(zs,xs)][:,0] < 10.0))[0]
+    
     pointcloud = o3d.geometry.PointCloud()
     pointcloud.points = o3d.utility.Vector3dVector(rgb_points[condition_index])
     pointcloud.colors = o3d.utility.Vector3dVector(rgb_colors[condition_index]/255.0)
@@ -68,10 +70,10 @@ def random_pixel_goal(habitat_config,habitat_env, difficulty='medium'):
         target_x = xs[random_index]
         target_z = zs[random_index]
         target_point = rgb_points[random_index]
-        min_z = max(target_z-5,0)
-        max_z = min(target_z+5,depth.shape[0])
-        min_x = max(target_x-5,0)
-        max_x = min(target_x+5,depth.shape[1])
+        min_z = max(target_z-mask_shape,0)
+        max_z = min(target_z+mask_shape,depth.shape[0])
+        min_x = max(target_x-mask_shape,0)
+        max_x = min(target_x+mask_shape,depth.shape[1])
         target_mask = np.zeros((depth.shape[0],depth.shape[1]),np.uint8)
         target_mask[min_z:max_z,min_x:max_x] = 1
         target_point[1] = robot_pos[1]
@@ -80,11 +82,12 @@ def random_pixel_goal(habitat_config,habitat_env, difficulty='medium'):
 # Define the stage
 stage = "train"
 split = "train"
-num_sampled_episodes = 1000
-num_saved_episodes = int(1e4)
+num_sampled_episodes = int(1e5)
+num_saved_episodes = int(1e5)
 max_timesteps = 64
 min_timesteps = 5
-save_path = "/scratch/vineeth.bhat/pix_nav_point_based_data/training"
+save_path = "/scratch/vineeth.bhat/pix_nav_point_based_data/training_100K"
+mask_shape = 3
 
 config_path = "hm3d_config_instance_image_nav_mod.yaml"
 
@@ -145,13 +148,21 @@ except Exception as e:
 
 episode_counter = 0
 
-follower = ShortestPathFollower(env.sim, goal_radius=1.5, return_one_hot=False)
+follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
 time_before_loop = time.time()
 
 while episode_counter < num_saved_episodes:
     start_time = time.time()
-    obs = env.reset()
+
+    try:
+        obs = env.reset()
+        episode_counter += 1
+    except Exception as e:
+        print(f"An error occurred while resetting environment: {e}")
+        print()
+        continue
+
     rgb_data = []
     depth_data = []
     pose_data = []
@@ -160,20 +171,27 @@ while episode_counter < num_saved_episodes:
     # goal_position = env.current_episode.goals[0].position
 
     goal_flag, goal_image, goal_mask, goal_point = random_pixel_goal(habitat_config, env)
-
     if goal_flag == False:
-        print(f"Rejected the current goal {goal_flag}")
+        print(f"Rejected the current goal with goal-flag {goal_flag}")
+        print()
+        continue
+
+    best_action = follower.get_next_action(goal_point)
+
+    if best_action == 0:
+        print(f"Rejected the current goal with goal-flag {goal_flag} and best-action {best_action}")
+        print()
         continue
 
     start_rgb_image = obs["rgb"]
     start_depth_image = obs["depth"]
+
+    # as a sanity check
+    last_best_action = None
     
     # Iterate over every step of the episode
     while True:
-        best_action = follower.get_next_action(goal_point)
-        if best_action is None:
-            print(f"Goal reached at timestep {timesteps}")
-            break
+        assert(best_action is not None and last_best_action != 0)
 
         action_data.append(best_action)
         obs = env.step(best_action)
@@ -191,9 +209,14 @@ while episode_counter < num_saved_episodes:
 
         timesteps += 1
 
-        if env.episode_over or timesteps >= max_timesteps:
+        if not (env.episode_over or timesteps >= max_timesteps):
+            last_best_action = best_action
+            best_action = follower.get_next_action(goal_point)
+        else:
+            print(f"Goal reached in {timesteps} steps")
             if timesteps < min_timesteps:
                 print(f"{timesteps} less than min. timesteps of {min_timesteps}")
+                print()
                 break
 
             episode_save_path = os.path.join(save_path, f"episode_{episode_counter}")
@@ -241,6 +264,7 @@ while episode_counter < num_saved_episodes:
             print(f"Done with episode {episode_counter} out of {num_saved_episodes} total")
             print(f"Time taken for this episode: {time_taken:.2f} seconds")
             print(f"Total time taken: {int(total_hours)} hours, {int(total_minutes)} minutes, {int(total_seconds)} seconds")
+            print(); print()
             break
 
 env.close()
