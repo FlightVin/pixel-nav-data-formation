@@ -66,8 +66,8 @@ def random_pixel_goal(habitat_config, habitat_env, mask_shape):
     rgb_points = translate_to_world(rgb_points, camera_pos, quaternion.as_rotation_matrix(camera_rot))
     condition_index = np.where((rgb_points[:,1] < robot_pos[1] + 1.0) & 
                                (rgb_points[:,1] > robot_pos[1] - 0.2) & 
-                               (depth[(zs,xs)][:,0] > 2.0) & 
-                               (depth[(zs,xs)][:,0] < 7.0))[0] # note - using different condition indices since different task dataset
+                               (depth[(zs,xs)][:,0] > 1.0) & 
+                               (depth[(zs,xs)][:,0] < 5.5))[0] # note - using different condition indices since different task dataset
     
     if condition_index.shape[0] == 0:
         return False, [], [], [], []
