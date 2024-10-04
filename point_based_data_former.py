@@ -10,6 +10,8 @@ import cv2
 import quaternion
 import open3d as o3d
 import time
+from pathlib import Path
+import h5py
 
 def habitat_camera_intrinsic(config):
     width = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.width
@@ -148,123 +150,105 @@ def main(args):
     episode_counter = 0
     time_before_loop = time.time()
 
-    while episode_counter < args.num_saved_episodes:
-        start_time = time.time()
+    hdf5_file_path = args.save_path
 
-        try:
-            obs = env.reset()
-        except Exception as e:
-            print(f"An error occurred while resetting environment: {e}")
-            continue
+    # create parent directories
+    directory_path = Path(hdf5_file_path).parent
+    directory_path.mkdir(parents=True, exist_ok=True)
 
-        rgb_data, depth_data, pose_data, action_data, normed_target_point_data = [], [], [], [], []
-        timesteps = 0
+    # Creation loop
+    with h5py.File(hdf5_file_path, 'w') as hdf:
+        while episode_counter < args.num_saved_episodes:
+            start_time = time.time()
 
-        goal_flag, goal_image, goal_mask, goal_point, height_uncorrected_goal_point = random_pixel_goal(habitat_config, env, args.mask_shape)
-        if not goal_flag:
-            print(f"Rejected the current goal with goal-flag {goal_flag}")
-            continue
+            try:
+                obs = env.reset()
+            except Exception as e:
+                print(f"An error occurred while resetting environment: {e}")
+                continue
 
-        best_action = follower.get_next_action(goal_point)
+            rgb_data, depth_data, pose_data, action_data, normed_target_point_data = [], [], [], [], []
+            timesteps = 0
 
-        if best_action == 0:
-            print(f"Rejected the current goal with goal-flag {goal_flag} and best-action {best_action}")
-            continue
+            goal_flag, goal_image, goal_mask, goal_point, height_uncorrected_goal_point = random_pixel_goal(habitat_config, env, args.mask_shape)
+            if not goal_flag:
+                print(f"Rejected the current goal with goal-flag {goal_flag}")
+                continue
 
-        start_rgb_image = obs["rgb"]
-        start_depth_image = obs["depth"]
+            best_action = follower.get_next_action(goal_point)
 
-        last_best_action = None
-        
-        while True:
-            assert(best_action is not None and last_best_action != 0) # sanity check
+            if best_action == 0:
+                print(f"Rejected the current goal with goal-flag {goal_flag} and best-action {best_action}")
+                continue
 
-            action_data.append(best_action)
-            obs = env.step(best_action)
+            start_rgb_image = obs["rgb"]
+            start_depth_image = obs["depth"]
+
+            last_best_action = None
             
-            rgb_data.append(obs['rgb'])
-            depth_data.append(obs['depth'])
+            while True:
+                assert(best_action is not None and last_best_action != 0) # sanity check
 
-            q = env.sim.get_agent_state().sensor_states["depth"].rotation
-            pose = np.concatenate([
-                np.array(env.sim.get_agent_state().sensor_states["depth"].position),
-                np.array([q.w, q.x, q.y, q.z])
-            ])
+                action_data.append(best_action)
+                obs = env.step(best_action)
+                
+                rgb_data.append(obs['rgb'])
+                depth_data.append(obs['depth'])
 
-            pose_data.append(pose)
-            normed_target_point_data.append(
-                get_normalized_goal_point_location_in_current_obs(habitat_config, env, height_uncorrected_goal_point)
-            )
+                q = env.sim.get_agent_state().sensor_states["depth"].rotation
+                pose = np.concatenate([
+                    np.array(env.sim.get_agent_state().sensor_states["depth"].position),
+                    np.array([q.w, q.x, q.y, q.z])
+                ])
 
-            timesteps += 1
+                pose_data.append(pose)
+                normed_target_point_data.append(
+                    get_normalized_goal_point_location_in_current_obs(habitat_config, env, height_uncorrected_goal_point)
+                )
 
-            if not (env.episode_over or timesteps >= args.max_timesteps):
-                last_best_action = best_action
-                best_action = follower.get_next_action(goal_point)
-            else:
-                print(f"Goal reached in {timesteps} steps")
-                if timesteps < args.min_timesteps:
-                    print(f"{timesteps} less than min. timesteps of {args.min_timesteps}")
+                timesteps += 1
+
+                if not (env.episode_over or timesteps >= args.max_timesteps):
+                    last_best_action = best_action
+                    best_action = follower.get_next_action(goal_point)
+                else:
+                    print(f"Goal reached in {timesteps} steps")
+                    if timesteps < args.min_timesteps:
+                        print(f"{timesteps} less than min. timesteps of {args.min_timesteps}")
+                        break
+
+                    episode_group = hdf.create_group(f"episode_{episode_counter}")
+
+                    episode_group.create_dataset("start_rgb_image", data=start_rgb_image)
+                    # episode_group.create_dataset("start_depth_image", data=start_depth_image)
+                    episode_group.create_dataset("goal_mask", data=goal_mask)
+                    # episode_group.create_dataset("poses", data=np.array(pose_data))
+                    episode_group.create_dataset("actions", data=np.array(action_data))
+                    episode_group.create_dataset("normalized_target_points", data=np.array(normed_target_point_data))
+                    episode_group.create_dataset("rgb_images", data=np.array(rgb_data))
+                    # episode_group.create_dataset("depth_images", data=np.array(depth_data))
+
+                    episode_counter += 1
+                    end_time = time.time()
+                    time_taken = end_time - start_time 
+                    total_time_taken = end_time - time_before_loop
+                    total_hours, rem = divmod(total_time_taken, 3600)
+                    total_minutes, total_seconds = divmod(rem, 60)
+
+                    print(f"Done with episode {episode_counter} out of {args.num_saved_episodes} total")
+                    print(f"Time taken for this episode: {time_taken:.2f} seconds")
+                    print(f"Total time taken: {int(total_hours)} hours, {int(total_minutes)} minutes, {int(total_seconds)} seconds")
+                    print()
                     break
 
-                episode_save_path = os.path.join(args.save_path, f"episode_{episode_counter}")
-                os.makedirs(episode_save_path)
-
-                cv2.imwrite(os.path.join(episode_save_path, "start_rgb_image.png"), start_rgb_image)
-                np.save(os.path.join(episode_save_path, "start_depth_image.npy"), start_depth_image)
-                np.save(os.path.join(episode_save_path, "goal_mask.npy"), goal_mask)
-
-                start_image_with_mask = apply_mask_to_image(start_rgb_image, goal_mask)
-                cv2.imwrite(os.path.join(episode_save_path, "start_rgb_image_with_mask.png"), start_image_with_mask)
-                            
-                np.save(os.path.join(episode_save_path, "poses.npy"), pose_data)
-                np.save(os.path.join(episode_save_path, "actions.npy"), action_data)
-                np.save(os.path.join(episode_save_path, "normalized_target_points.npy"), normed_target_point_data)
-
-                rgb_images_save_path = os.path.join(episode_save_path, "rgb")
-                depth_images_save_path = os.path.join(episode_save_path, "depth")
-                os.makedirs(rgb_images_save_path)
-                os.makedirs(depth_images_save_path)
-
-                for i, (rgb, depth) in enumerate(zip(rgb_data, depth_data)):
-                    # target_x, target_z = unnormalize_goal_point(
-                    #     normed_target_point_data[i][0], normed_target_point_data[i][1], rgb.shape
-                    # )
-
-                    # rgb_with_mask = \
-                    #     apply_mask_to_image(
-                    #         rgb, 
-                    #         create_target_mask(
-                    #             target_x,
-                    #             target_z,
-                    #             args.mask_shape,
-                    #             depth.shape
-                    #         )
-                    # )
-
-                    cv2.imwrite(os.path.join(rgb_images_save_path, f"{i}.png"), rgb)
-                    np.save(os.path.join(depth_images_save_path, f"{i}.npy"), depth)
-
-                episode_counter += 1
-                end_time = time.time()
-                time_taken = end_time - start_time 
-                total_time_taken = end_time - time_before_loop
-                total_hours, rem = divmod(total_time_taken, 3600)
-                total_minutes, total_seconds = divmod(rem, 60)
-
-                print(f"Done with episode {episode_counter} out of {args.num_saved_episodes} total")
-                print(f"Time taken for this episode: {time_taken:.2f} seconds")
-                print(f"Total time taken: {int(total_hours)} hours, {int(total_minutes)} minutes, {int(total_seconds)} seconds")
-                print()
-                break
-
+    print(f"All episodes saved to {hdf5_file_path}")
     env.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Habitat Data Collection Script")
-    parser.add_argument("--stage", type=str, default="train", help="Stage (train/val/test)")
-    parser.add_argument("--split", type=str, default="train", help="Split (train/val/test)")
-    parser.add_argument("--num_sampled_episodes", type=int, default=int(1e4), help="Number of sampled episodes")
+    parser.add_argument("--stage", type=str, default="train", help="Stage (train/val/minival)")
+    parser.add_argument("--split", type=str, default="train", help="Split (train/val/valmini)")
+    parser.add_argument("--num_sampled_episodes", "-nse", type=int, default=int(1e4), help="Number of sampled episodes")
     parser.add_argument("--max_timesteps", type=int, default=64, help="Maximum timesteps per episode")
     parser.add_argument("--min_timesteps", type=int, default=5, help="Minimum timesteps per episode")
     parser.add_argument("--mask_shape", type=int, default=3, help="Shape of the goal mask")
@@ -272,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument("--robot_height", type=float, default=0.88, help="Robot height")
     parser.add_argument("--robot_radius", type=float, default=0.25, help="Robot radius")
     parser.add_argument("--sensor_height", type=float, default=0.88, help="Sensor height")
-    parser.add_argument("--image_width", type=int, default=224, help="Image width")
+    parser.add_argument("--image_width", type=int, default=224, help="Image width") # don't change
     parser.add_argument("--image_height", type=int, default=224, help="Image height")
     parser.add_argument("--image_hfov", type=float, default=79, help="Image horizontal field of view")
     parser.add_argument("--step_size", type=float, default=0.25, help="Step size")
@@ -281,7 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="/scratch/vineeth.bhat/sg_habitat/data/datasets/instance_imagenav/hm3d/v3", help="Path to data directory")
     parser.add_argument("--scene_dataset_dir", type=str, default="/scratch/vineeth.bhat/sg_habitat/data/scene_datasets/hm3d", help="Path to scene dataset directory")
     parser.add_argument("--scenes_dir", type=str, default="/scratch/vineeth.bhat/sg_habitat/data/scene_datasets", help="Path to scenes directory")
-    parser.add_argument("--save_path", "-s", type=str, default="/scratch/vineeth.bhat/pix_nav_point_based_data/training_10K_instance_nav", help="Path to save data")
+    parser.add_argument("--save_path", "-s", type=str, default="/scratch/vineeth.bhat/pix_nav_point_based_data/training_100.h5", help="Path to save data")
     parser.add_argument("--num_saved_episodes", "-n", type=int, default=int(1), help="Number of saved episodes")
 
     args = parser.parse_args()
