@@ -144,9 +144,13 @@ def create_habitat_config(config_path, args):
     scene_dataset = (
         f"{args.scene_dataset_dir}/hm3d_annotated_basis.scene_dataset_config.json"
     )
+    print(f"Using data path: {data_path}")
+    print(f"Using scene dataset: {scene_dataset}")
 
-    if not os.path.exists(data_path) or not os.path.exists(scene_dataset):
-        raise RuntimeError(f"Data path or scene dataset does not exist!")
+    if not os.path.exists(data_path):
+        raise RuntimeError(f"Data path path does not exist: {data_path}")
+    if not os.path.exists(scene_dataset):
+        raise RuntimeError(f"Scene dataset path does not exist: {scene_dataset}")
 
     with read_write(habitat_config):
         habitat_config.habitat.dataset.split = args.split
@@ -197,26 +201,12 @@ def create_habitat_config(config_path, args):
         )
         habitat_config.habitat.simulator.forward_step_size = args.step_size
         habitat_config.habitat.simulator.turn_angle = args.turn_angle
-        if (
-            "semantic_sensor"
-            not in habitat_config.habitat.simulator.agents.main_agent.sim_sensors
-        ):
-            habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor = get_config(
-                "habitat/simulator/sensor/semantic_sensor"
-            )
-
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor.type = (
-            "HabitatSimSemanticSensor"
-        )
         habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor.height = (
             args.image_height
         )
         habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor.width = (
             args.image_width
         )
-        # habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor.hfov = (
-        #     args.image_hfov
-        # )
         habitat_config.habitat.simulator.agents.main_agent.sim_sensors.semantic_sensor.position = [
             0,
             args.sensor_height,

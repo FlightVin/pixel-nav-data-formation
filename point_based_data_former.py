@@ -76,6 +76,8 @@ def main(args):
                 continue
 
             start_rgb_image = obs["rgb"]
+            start_semantic_image = np.squeeze(obs["semantic"])
+            print(np.unique(start_semantic_image))
             start_depth_image = obs["depth"]
             start_pose = np.concatenate(
                 [
@@ -103,6 +105,9 @@ def main(args):
                         ),
                     ]
                 )
+
+                semantic_image = np.squeeze(obs["semantic"])
+                print(np.unique(semantic_image))
 
                 pose_data.append(pose)
                 normed_target_point_data.append(

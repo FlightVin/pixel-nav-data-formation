@@ -48,7 +48,6 @@ def augment_data(hdf5_file_path, output_dir, habitat_config):
                 f"Resetting environment for episode {episode_idx} with pose: {start_pose}"
             )
 
-            # Reset the environment
             _ = env.reset()
 
             observations = env.sim.get_observations_at(
@@ -56,12 +55,21 @@ def augment_data(hdf5_file_path, output_dir, habitat_config):
                 rotation=quaternion_from_coeff(start_pose[3:]),
             )
 
-            generated_start_rgb = observations["rgb"]
-            generated_start_rgb_pil = Image.fromarray(generated_start_rgb)
-            generated_start_rgb_path = os.path.join(
-                episode_dir, "generated_start_rgb_image.png"
+            # generated_start_rgb = observations["rgb"]
+            # generated_start_rgb_pil = Image.fromarray(generated_start_rgb)
+            # generated_start_rgb_path = os.path.join(
+            #     episode_dir, "generated_start_rgb_image.png"
+            # )
+            # generated_start_rgb_pil.save(generated_start_rgb_path)
+
+            start_semantic_image = observations["semantic"]
+            start_semantic_image_pil = Image.fromarray(
+                start_semantic_image.astype(np.uint8)
             )
-            generated_start_rgb_pil.save(generated_start_rgb_path)
+            start_semantic_image_path = os.path.join(
+                episode_dir, "start_semantic_image.png"
+            )
+            start_semantic_image_pil.save(start_semantic_image_path)
 
             rgb_images = episode_group["rgb_images"][:]
             poses = episode_group["poses"][:]
@@ -69,21 +77,27 @@ def augment_data(hdf5_file_path, output_dir, habitat_config):
             for img_idx in range(rgb_images.shape[0]):
                 rgb_image = rgb_images[img_idx]
                 rgb_image_pil = Image.fromarray(rgb_image)
-                rgb_image_path = os.path.join(episode_dir, f"rgb_image_{img_idx}.png")
+                rgb_image_path = os.path.join(episode_dir, f"image_{img_idx}_rgb.png")
                 rgb_image_pil.save(rgb_image_path)
 
                 pose = poses[img_idx]
                 observations = env.sim.get_observations_at(
                     position=pose[:3], rotation=quaternion_from_coeff(pose[3:])
                 )
-                generated_rgb = observations["rgb"]
-                generated_rgb_pil = Image.fromarray(generated_rgb)
-                generated_rgb_path = os.path.join(
-                    episode_dir, f"generated_rgb_image_{img_idx}.png"
-                )
-                generated_rgb_pil.save(generated_rgb_path)
+                # generated_rgb = observations["rgb"]
+                # generated_rgb_pil = Image.fromarray(generated_rgb)
+                # generated_rgb_path = os.path.join(
+                #     episode_dir, f"generated_rgb_image_{img_idx}.png"
+                # )
+                # generated_rgb_pil.save(generated_rgb_path)
 
-            break
+                semantic_image = observations["semantic"]
+                semantic_image_pil = Image.fromarray(semantic_image.astype(np.uint8))
+                semantic_image_path = os.path.join(
+                    episode_dir, f"image_{img_idx}_sem.png"
+                )
+                semantic_image_pil.save(semantic_image_path)
+
     print(f"Dataset augmented and converted. Output saved to {output_dir}")
     env.close()
 
@@ -155,7 +169,9 @@ def main():
 
     args = parser.parse_args()
 
-    habitat_config = habitat_config = create_habitat_config(args.config_path, args)
+    habitat_config = create_habitat_config(args.config_path, args)
+
+    return habitat_config, args
 
     augment_data(args.hdf5_file, args.output_dir, habitat_config)
 
