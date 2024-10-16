@@ -6,140 +6,14 @@ import os
 import argparse
 import numpy as np
 import habitat
-from habitat.datasets.image_nav.instance_image_nav_dataset import (
-    InstanceImageNavDatasetV1,
-)
-from habitat.tasks.nav.instance_image_nav_task import InstanceImageNavigationTask
-from habitat.config.read_write import read_write
 from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
-import cv2
-import quaternion
-import open3d as o3d
 import time
 from pathlib import Path
 import h5py
+from habitat.utils.geometry_utils import quaternion_from_coeff, quaternion_to_list
+from utils import *
 
-
-def habitat_camera_intrinsic(config):
-    width = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.width
-    height = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.height
-    hfov = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.hfov
-    xc = (width - 1.0) / 2.0
-    zc = (height - 1.0) / 2.0
-    f = (width / 2.0) / np.tan(np.deg2rad(hfov / 2.0))
-    intrinsic_matrix = np.array([[f, 0, xc], [0, f, zc], [0, 0, 1]], np.float32)
-    return intrinsic_matrix
-
-
-def get_pointcloud_from_depth(rgb, depth, intrinsic):
-    if len(depth.shape) == 3:
-        depth = depth[:, :, 0]
-    filter_z, filter_x = np.where(depth > -1)
-    depth_values = depth[filter_z, filter_x]
-    pixel_z = (
-        (depth.shape[0] - 1 - filter_z - intrinsic[1][2])
-        * depth_values
-        / intrinsic[1][1]
-    )
-    pixel_x = (filter_x - intrinsic[0][2]) * depth_values / intrinsic[0][0]
-    pixel_y = depth_values
-    color_values = rgb[filter_z, filter_x]
-    point_values = np.stack([pixel_x, pixel_z, -pixel_y], axis=-1)
-    return filter_x, filter_z, point_values, color_values
-
-
-def translate_to_world(points, position, rotation):
-    extrinsic = np.eye(4)
-    extrinsic[0:3, 0:3] = rotation
-    extrinsic[0:3, 3] = position
-    world_points = np.matmul(
-        extrinsic, np.concatenate((points, np.ones((points.shape[0], 1))), axis=-1).T
-    ).T
-    return np.array(world_points[:, 0:3])
-
-
-def create_target_mask(target_x, target_z, mask_shape, depth_shape):
-    min_z = max(target_z - mask_shape, 0)
-    max_z = min(target_z + mask_shape, depth_shape[0])
-    min_x = max(target_x - mask_shape, 0)
-    max_x = min(target_x + mask_shape, depth_shape[1])
-    target_mask = np.zeros((depth_shape[0], depth_shape[1]), np.uint8)
-    target_mask[min_z:max_z, min_x:max_x] = 1
-    return target_mask
-
-
-def random_pixel_goal(habitat_config, habitat_env, mask_shape):
-    camera_int = habitat_camera_intrinsic(habitat_config)
-    robot_pos = habitat_env.sim.get_agent_state().position
-    robot_rot = habitat_env.sim.get_agent_state().rotation
-    camera_pos = habitat_env.sim.get_agent_state().sensor_states["rgb"].position
-    camera_rot = habitat_env.sim.get_agent_state().sensor_states["rgb"].rotation
-    camera_obs = habitat_env.sim.get_observations_at(robot_pos, robot_rot)
-    rgb = camera_obs["rgb"]
-    depth = camera_obs["depth"]
-    xs, zs, rgb_points, rgb_colors = get_pointcloud_from_depth(rgb, depth, camera_int)
-    rgb_points = translate_to_world(
-        rgb_points, camera_pos, quaternion.as_rotation_matrix(camera_rot)
-    )
-    condition_index = np.where(
-        (rgb_points[:, 1] < robot_pos[1] + 1.0)
-        & (rgb_points[:, 1] > robot_pos[1] - 0.2)
-        & (depth[(zs, xs)][:, 0] > 1.0)
-        & (depth[(zs, xs)][:, 0] < 5.5)
-    )[
-        0
-    ]  # note - using different condition indices since different task dataset
-
-    if condition_index.shape[0] == 0:
-        return False, [], [], [], []
-    else:
-        random_index = np.random.choice(condition_index)
-        target_x = xs[random_index]
-        target_z = zs[random_index]
-        target_point = rgb_points[random_index]
-        target_mask = create_target_mask(target_x, target_z, mask_shape, depth.shape)
-        original_target_point = target_point.copy()
-        target_point[1] = robot_pos[1]
-        return True, rgb, target_mask, target_point, original_target_point
-
-
-def get_normalized_goal_point_location_in_current_obs(
-    habitat_config, habitat_env, target_point
-):
-    # https://github.com/wzcai99/Pixel-Navigator/issues/8#issuecomment-2378593390
-    camera_int = habitat_camera_intrinsic(habitat_config)
-    robot_pos = habitat_env.sim.get_agent_state().position
-    robot_rot = habitat_env.sim.get_agent_state().rotation
-    camera_pos = habitat_env.sim.get_agent_state().sensor_states["rgb"].position
-    camera_rot = habitat_env.sim.get_agent_state().sensor_states["rgb"].rotation
-    camera_obs = habitat_env.sim.get_observations_at(robot_pos, robot_rot)
-    rgb = camera_obs["rgb"]
-    depth = camera_obs["depth"]
-    xs, zs, rgb_points, _ = get_pointcloud_from_depth(rgb, depth, camera_int)
-    rgb_points_world = translate_to_world(
-        rgb_points, camera_pos, quaternion.as_rotation_matrix(camera_rot)
-    )
-    distances = np.linalg.norm(rgb_points_world - target_point, axis=1)
-    closest_point_index = np.argmin(distances)
-    closest_pixel_x = xs[closest_point_index]
-    closest_pixel_z = zs[closest_point_index]
-    closest_pixel_x_normalized = closest_pixel_x / rgb.shape[1]
-    closest_pixel_z_normalized = closest_pixel_z / rgb.shape[0]
-    return closest_pixel_x_normalized, closest_pixel_z_normalized
-
-
-def unnormalize_goal_point(target_x_normalized, target_z_normalized, image_shape):
-    return int(target_x_normalized * image_shape[1]), int(
-        target_z_normalized * image_shape[0]
-    )
-
-
-def apply_mask_to_image(
-    image, mask, overlay_color=np.array([0, 0, 255], dtype=np.uint8)
-):
-    result_image = image.copy()
-    result_image[mask == 1] = overlay_color
-    return result_image
+seed_everything(42)
 
 
 def main(args):
@@ -147,67 +21,10 @@ def main(args):
     if not os.path.exists(config_path):
         raise RuntimeError(f"{config_path} does not exist!")
 
-    habitat_config = habitat.get_config(config_path)
-
-    data_path = f"{args.data_dir}/{args.stage}/{args.stage}.json.gz"
-    scene_dataset = (
-        f"{args.scene_dataset_dir}/hm3d_annotated_basis.scene_dataset_config.json"
-    )
-
-    if not os.path.exists(data_path) or not os.path.exists(scene_dataset):
-        raise RuntimeError(f"Data path or scene dataset does not exist!")
-
-    with read_write(habitat_config):
-        habitat_config.habitat.dataset.split = args.split
-        habitat_config.habitat.dataset.scenes_dir = args.scenes_dir
-        habitat_config.habitat.dataset.data_path = data_path
-        habitat_config.habitat.simulator.scene_dataset = scene_dataset
-        habitat_config.habitat.environment.iterator_options.num_episode_sample = (
-            args.num_sampled_episodes
-        )
-        habitat_config.habitat.simulator.agents.main_agent.height = args.robot_height
-        habitat_config.habitat.simulator.agents.main_agent.radius = args.robot_radius
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.height = (
-            args.image_height
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.width = (
-            args.image_width
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.hfov = (
-            args.image_hfov
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.rgb_sensor.position = [
-            0,
-            args.sensor_height,
-            0,
-        ]
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.height = (
-            args.image_height
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.width = (
-            args.image_width
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.hfov = (
-            args.image_hfov
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.position = [
-            0,
-            args.sensor_height,
-            0,
-        ]
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth = (
-            500.0
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = (
-            0.0
-        )
-        habitat_config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.normalize_depth = (
-            False
-        )
-        habitat_config.habitat.simulator.forward_step_size = args.step_size
-        habitat_config.habitat.simulator.turn_angle = args.turn_angle
+    habitat_config = create_habitat_config(config_path, args)
 
     env = habitat.Env(habitat_config)
+    env.seed(42)
     follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
     episode_counter = 0
@@ -260,6 +77,12 @@ def main(args):
 
             start_rgb_image = obs["rgb"]
             start_depth_image = obs["depth"]
+            start_pose = np.concatenate(
+                [
+                    np.array(env.sim.get_agent_state().position),
+                    np.array(quaternion_to_list(env.sim.get_agent_state().rotation)),
+                ]
+            )
 
             last_best_action = None
 
@@ -272,13 +95,12 @@ def main(args):
                 rgb_data.append(obs["rgb"])
                 depth_data.append(obs["depth"])
 
-                q = env.sim.get_agent_state().sensor_states["depth"].rotation
                 pose = np.concatenate(
                     [
+                        np.array(env.sim.get_agent_state().position),
                         np.array(
-                            env.sim.get_agent_state().sensor_states["depth"].position
+                            quaternion_to_list(env.sim.get_agent_state().rotation)
                         ),
-                        np.array([q.w, q.x, q.y, q.z]),
                     ]
                 )
 
@@ -288,6 +110,15 @@ def main(args):
                         habitat_config, env, height_uncorrected_goal_point
                     )
                 )
+
+                # gen_observations = env.sim.get_observations_at(
+                #     position=pose[:3],
+                #     rotation=quaternion_from_coeff(pose[3:]),
+                # )
+                # print(
+                #     "Images are equal",
+                #     np.array_equal(obs["rgb"], gen_observations["rgb"]),
+                # )
 
                 timesteps += 1
 
@@ -309,13 +140,22 @@ def main(args):
                     )
                     # episode_group.create_dataset("start_depth_image", data=start_depth_image)
                     episode_group.create_dataset("goal_mask", data=goal_mask)
-                    # episode_group.create_dataset("poses", data=np.array(pose_data))
+                    episode_group.create_dataset("start_pose", data=start_pose)
+                    episode_group.create_dataset("poses", data=np.array(pose_data))
                     episode_group.create_dataset("actions", data=np.array(action_data))
                     episode_group.create_dataset(
                         "normalized_target_points",
                         data=np.array(normed_target_point_data),
                     )
                     episode_group.create_dataset("rgb_images", data=np.array(rgb_data))
+                    episode_group.create_dataset(
+                        "height_uncorrected_goal_point",
+                        data=np.array(height_uncorrected_goal_point),
+                    )
+                    episode_group.create_dataset(
+                        "goal_point",
+                        data=np.array(goal_point),
+                    )
                     # episode_group.create_dataset("depth_images", data=np.array(depth_data))
 
                     episode_counter += 1
