@@ -7,6 +7,8 @@ import open3d as o3d
 from habitat.config.default import get_config
 import random
 
+UTILS_SEED = 42
+
 
 def seed_everything(seed):
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -20,8 +22,9 @@ def habitat_camera_intrinsic(config):
     hfov = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.hfov
     xc = (width - 1.0) / 2.0
     zc = (height - 1.0) / 2.0
-    f = (width / 2.0) / np.tan(np.deg2rad(hfov / 2.0))
-    intrinsic_matrix = np.array([[f, 0, xc], [0, f, zc], [0, 0, 1]], np.float32)
+    fx = (width / 2.0) / np.tan(np.deg2rad(hfov / 2.0))
+    fy = (height / 2.0) / np.tan(np.deg2rad(hfov / 2.0))
+    intrinsic_matrix = np.array([[fx, 0, xc], [0, fy, zc], [0, 0, 1]], np.float32)
     return intrinsic_matrix
 
 
@@ -138,7 +141,9 @@ def apply_mask_to_image(
 
 def create_habitat_config(config_path, args):
 
-    habitat_config = habitat.get_config(config_path)
+    habitat_config = habitat.get_config(
+        config_path, overrides=[f"habitat.seed={UTILS_SEED}"]
+    )
 
     data_path = f"{args.data_dir}/{args.stage}/{args.stage}.json.gz"
     scene_dataset = (

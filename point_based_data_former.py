@@ -2,6 +2,10 @@
 Code used to create dataset for pixel goals. Uses latest habitat lab version.
 """
 
+from utils import *
+
+seed_everything(UTILS_SEED)
+
 import os
 import argparse
 import numpy as np
@@ -10,10 +14,8 @@ from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
 import time
 from pathlib import Path
 import h5py
+from tqdm import tqdm
 from habitat.utils.geometry_utils import quaternion_from_coeff, quaternion_to_list
-from utils import *
-
-seed_everything(42)
 
 
 def main(args):
@@ -24,7 +26,7 @@ def main(args):
     habitat_config = create_habitat_config(config_path, args)
 
     env = habitat.Env(habitat_config)
-    env.seed(42)
+    env.seed(UTILS_SEED)
     follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
     episode_counter = 0
@@ -35,6 +37,8 @@ def main(args):
     # create parent directories
     directory_path = Path(hdf5_file_path).parent
     directory_path.mkdir(parents=True, exist_ok=True)
+
+    pbar = tqdm(total=args.num_saved_episodes)
 
     # Creation loop
     with h5py.File(hdf5_file_path, "w") as hdf:
@@ -164,6 +168,7 @@ def main(args):
                     # episode_group.create_dataset("depth_images", data=np.array(depth_data))
 
                     episode_counter += 1
+                    pbar.update(1)
                     end_time = time.time()
                     time_taken = end_time - start_time
                     total_time_taken = end_time - time_before_loop
