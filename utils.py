@@ -6,11 +6,14 @@ import quaternion
 import open3d as o3d
 from habitat.config.default import get_config
 import random
+from PIL import Image
+
 
 UTILS_SEED = 42
+SEMANTIC_COLOR_MAP = {}
 
 
-def seed_everything(seed):
+def seed_everything(seed=UTILS_SEED):
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -81,7 +84,7 @@ def random_pixel_goal(habitat_config, habitat_env, mask_shape):
     condition_index = np.where(
         (rgb_points[:, 1] < robot_pos[1] + 1.0)
         & (rgb_points[:, 1] > robot_pos[1] - 0.2)
-        & (depth[(zs, xs)][:, 0] > 1.0)
+        & (depth[(zs, xs)][:, 0] > 0.5)
         & (depth[(zs, xs)][:, 0] < 5.5)
     )[
         0
@@ -139,11 +142,9 @@ def apply_mask_to_image(
     return result_image
 
 
-def create_habitat_config(config_path, args):
+def create_habitat_config(config_path, args, seed=UTILS_SEED):
 
-    habitat_config = habitat.get_config(
-        config_path, overrides=[f"habitat.seed={UTILS_SEED}"]
-    )
+    habitat_config = habitat.get_config(config_path, overrides=[f"habitat.seed={seed}"])
 
     data_path = f"{args.data_dir}/{args.stage}/{args.stage}.json.gz"
     scene_dataset = (
@@ -218,3 +219,91 @@ def create_habitat_config(config_path, args):
             0,
         ]
     return habitat_config
+
+
+def create_episode_directory(base_dir, episode_idx):
+    episode_dir = os.path.join(base_dir, f"episode_{episode_idx}")
+    os.makedirs(episode_dir, exist_ok=True)
+    return episode_dir
+
+
+def save_rgb_image(image_array, save_path):
+    image = Image.fromarray(image_array.astype(np.uint8))
+    if save_path is not None:
+        image.save(save_path)
+    return image
+
+
+def save_semantic_image(semantic_image, save_path):
+    unique_labels = np.unique(semantic_image)
+
+    for label in unique_labels:
+        if label not in SEMANTIC_COLOR_MAP:
+            SEMANTIC_COLOR_MAP[label] = (
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(0, 255),
+            )
+
+    height, width = semantic_image.shape
+    rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+    for label in unique_labels:
+        rgb_image[semantic_image == label] = SEMANTIC_COLOR_MAP[label]
+
+    return save_rgb_image(rgb_image, save_path)
+
+
+def save_pathlength_image(image_array, save_path):
+    clipped = np.clip(image_array, 0, 100)
+    # upper_bound = max(
+    #     (min(np.max(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80), 5
+    # )
+    upper_bound = min(np.max(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80
+    lower_bound = min(np.min(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80
+
+    if upper_bound == lower_bound:
+        lower_bound -= 0.005
+
+    rgb_array = np.zeros((*clipped.shape, 3))
+
+    mask_under_upper_bound = clipped <= upper_bound
+    values_under_upper_bound = clipped[mask_under_upper_bound]
+    norm_within_bounds = (
+        (values_under_upper_bound - lower_bound) / (upper_bound - lower_bound)
+    ) ** 2
+
+    # Larger values will be darker
+    rgb_array[mask_under_upper_bound, 0] = rgb_array[mask_under_upper_bound, 1] = (
+        rgb_array[mask_under_upper_bound, 2]
+    ) = (1 - norm_within_bounds)
+
+    rgb_array[clipped > upper_bound, 0] = 1.0
+
+    return save_rgb_image(rgb_array * 255, save_path)
+
+
+def save_depth_image(depth_array, save_path, max_depth=20.0):
+    clipped_depth = np.clip(depth_array, 0, max_depth)
+    normalized_depth = 1.0 - (clipped_depth / max_depth)
+    depth_image = (normalized_depth * 255).astype(np.uint8)
+    depth_image[depth_array > max_depth] = 255
+
+    return save_rgb_image(depth_image, save_path)
+
+
+def save_multiple_images_as_row(images, save_path):
+    total_width = sum(image.width for image in images)
+    max_height = max(image.height for image in images)
+
+    new_image = Image.new("RGB", (total_width, max_height))
+
+    current_x = 0
+    for image in images:
+        new_image.paste(image, (current_x, 0))
+        current_x += image.width
+
+    if save_path is not None:
+        new_image.save(save_path)
+
+    return new_image

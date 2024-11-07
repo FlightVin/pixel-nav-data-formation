@@ -39,7 +39,7 @@ def create_episode_directories(base_dir, episode_idx):
     return episode_dir, rgb_dir, pls_dir
 
 
-def save_image(image_array, save_path, is_rgb=True):
+def save_rgb_image(image_array, save_path, is_rgb=True):
     if is_rgb:
         image = Image.fromarray(image_array.astype(np.uint8))
     else:
@@ -207,15 +207,15 @@ def augment_data(hdf5_file_path, output_dir, habitat_config):
             #     os.path.join(episode_dir, "start_pathlengths_image.npy"),
             #     start_plsImg,
             # )
-            save_image(
+            save_rgb_image(
                 start_plsImg,
                 os.path.join(episode_dir, "start_pathlengths_image.png"),
                 is_rgb=False,
             )
-            save_image(
+            save_rgb_image(
                 start_rgb_image, os.path.join(episode_dir, f"start_rgb_image.png")
             )
-            save_image(
+            save_rgb_image(
                 observations["rgb"],
                 os.path.join(episode_dir, f"start_generated_rgb_image.png"),
             )
@@ -250,16 +250,16 @@ def augment_data(hdf5_file_path, output_dir, habitat_config):
                     goal_position,
                 )
 
-                save_image(
+                save_rgb_image(
                     plsImg,
                     os.path.join(episode_dir, f"pathlengths_image_{img_idx:05}.png"),
                     is_rgb=False,
                 )
-                save_image(
+                save_rgb_image(
                     rgb_images[img_idx],
                     os.path.join(episode_dir, f"rgb_image_{img_idx:05}.png"),
                 )
-                save_image(
+                save_rgb_image(
                     observations["rgb"],
                     os.path.join(episode_dir, f"generated_rgb_image_{img_idx:05}.png"),
                 )
