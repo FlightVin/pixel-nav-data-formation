@@ -273,7 +273,7 @@ def save_pathlength_image(image_array, save_path):
         (values_under_upper_bound - lower_bound) / (upper_bound - lower_bound)
     ) ** 2
 
-    # Larger values will be darker
+    # White/bright = close to goal
     rgb_array[mask_under_upper_bound, 0] = rgb_array[mask_under_upper_bound, 1] = (
         rgb_array[mask_under_upper_bound, 2]
     ) = (1 - norm_within_bounds)

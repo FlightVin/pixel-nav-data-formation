@@ -16,19 +16,41 @@ import habitat_sim
 
 
 def find_shortest_path(sim, p1, p2):
+    # path = habitat_sim.ShortestPath()
+    # path.requested_start = p1
+    # path.requested_end = p2
+    # found_path = sim.pathfinder.find_path(path)
+
+    # # print(sim.agents[0])
+    # # raise
+
+    # ggf = habitat_sim.nav.GreedyGeodesicFollower(sim.pathfinder, sim.agents[0])
+    # return len(ggf.find_path(p2)), None
+
+    # return path.geodesic_distance, path.points
+
     path = habitat_sim.ShortestPath()
     path.requested_start = p1
     path.requested_end = p2
     found_path = sim.pathfinder.find_path(path)
     return path.geodesic_distance, path.points
+    # geod_distance = sim.geodesic_distance(p1, p2)
+    # return geod_distance, None
+    # if geod_distance >= 4:
+    #     return geod_distance, None
+    # print(np.linalg.norm(np.array(p1) - np.array(p2)))
+    # print(geod_distance)
+    return min(geod_distance, np.linalg.norm(np.array(p1) - np.array(p2))), None
 
 
-def get_pathlength_GT_modified(sim, habitat_config, depth, semantic, goal_position):
+def get_pathlength_GT_modified(
+    sim, habitat_config, depth, semantic, goal_position, ignored_objs=[]
+):
     H, W = depth.shape
     K = habitat_camera_intrinsic(habitat_config)
     instances = np.unique(semantic)
-    numSamples = 30
-    areaThresh = int(np.ceil(0.001 * H * W))
+    numSamples = 50
+    areaThresh = int(np.ceil(0.0005 * H * W))
 
     position = sim.get_agent_state().position
     rotation = sim.get_agent_state().rotation
@@ -86,7 +108,7 @@ def get_pathlength_GT_modified(sim, habitat_config, depth, semantic, goal_positi
         pls_insta = pls[subInds]
         distsMask_insta = distsMask[subInds]
 
-        if distsMask_insta.sum() == 0:
+        if distsMask_insta.sum() == 0 or instances[i] in ignored_objs:
             pl_min = np.inf
         else:
             pl_min = np.min(pls_insta[distsMask_insta])
@@ -112,6 +134,39 @@ def main(args):
     habitat_config = create_habitat_config(config_path, args)
     env = habitat.Env(habitat_config)
     env.seed(UTILS_SEED)
+
+    # semantic_scene = env.sim.semantic_scene
+    # instance_id_to_name = {}
+    # for obj in semantic_scene.objects:
+    #     if obj is not None:
+    #         instance_id_to_name[obj.id] = obj.category.name()
+    # print("Semantic Instance Mapping:")
+    # from pprint import pprint
+
+    # pprint(instance_id_to_name)
+    # raise
+
+    ignored_objs_data = {
+        "floor mat_271": "floor mat",
+        "floor mat_293": "floor mat",
+        "floor mat_294": "floor mat",
+        "floor_134": "floor",
+        "floor_289": "floor",
+        "floor_292": "floor",
+        "floor_31": "floor",
+        "floor_362": "floor",
+        "floor_363": "floor",
+        "floor_375": "floor",
+        "floor_40": "floor",
+        "floor_408": "floor",
+        "floor_444": "floor",
+        "floor_532": "floor",
+        "floor_549": "floor",
+        "floor_591": "floor",
+        "floor_644": "floor",
+    }
+    ignored_objs = [int(key.split("_")[1]) for key in ignored_objs_data.keys()]
+
     follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
     episode_counter = 0
@@ -239,6 +294,7 @@ def main(args):
                     start_depth,
                     start_semantic,
                     goal_position,
+                    ignored_objs,
                 )
                 save_pathlength_image(
                     start_plsImg,
@@ -289,7 +345,10 @@ def main(args):
                         current_depth,
                         current_semantic,
                         goal_position,
+                        ignored_objs,
                     )
+                    # print(np.unique(current_plsImg))
+
                     pathlength_image_pil_obj = save_pathlength_image(
                         current_plsImg,
                         None,
@@ -345,12 +404,12 @@ if __name__ == "__main__":
         "--config_path", type=str, default="hm3d_config_instance_image_nav_mod.yaml"
     )
     parser.add_argument("--robot_height", type=float, default=0.88)
-    parser.add_argument("--robot_radius", type=float, default=0.25)
+    parser.add_argument("--robot_radius", type=float, default=0.30)
     parser.add_argument("--sensor_height", type=float, default=0.88)
     parser.add_argument("--image_width", type=int, default=224)
     parser.add_argument("--image_height", type=int, default=224)
     parser.add_argument("--image_hfov", type=float, default=79)
-    parser.add_argument("--step_size", type=float, default=0.25)
+    parser.add_argument("--step_size", type=float, default=0.15)
     parser.add_argument("--turn_angle", type=float, default=30)
     parser.add_argument(
         "--data_dir",
