@@ -254,32 +254,16 @@ def save_semantic_image(semantic_image, save_path):
 
 
 def save_pathlength_image(image_array, save_path):
-    clipped = np.clip(image_array, 0, 100)
-    # upper_bound = max(
-    #     (min(np.max(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80), 5
-    # )
-    upper_bound = min(np.max(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80
-    lower_bound = min(np.min(clipped[clipped < 80]), 80) if np.any(clipped < 80) else 80
+    rgb_array = np.stack((image_array,) * 3, axis=-1)
+    return save_rgb_image(rgb_array, save_path)
 
-    if upper_bound == lower_bound:
-        lower_bound -= 0.005
 
-    rgb_array = np.zeros((*clipped.shape, 3))
-
-    mask_under_upper_bound = clipped <= upper_bound
-    values_under_upper_bound = clipped[mask_under_upper_bound]
-    norm_within_bounds = (
-        (values_under_upper_bound - lower_bound) / (upper_bound - lower_bound)
-    ) ** 2
-
-    # White/bright = close to goal
-    rgb_array[mask_under_upper_bound, 0] = rgb_array[mask_under_upper_bound, 1] = (
-        rgb_array[mask_under_upper_bound, 2]
-    ) = (1 - norm_within_bounds)
-
-    rgb_array[clipped > upper_bound, 0] = 1.0
-
-    return save_rgb_image(rgb_array * 255, save_path)
+def convert_direct_pls_image_to_uint(image_array):
+    image_array = np.asarray(image_array)
+    processed_array = image_array * 20
+    processed_array = np.clip(processed_array, 0, 255)
+    processed_array[np.isinf(processed_array)] = 255
+    return processed_array.astype(np.uint8)
 
 
 def save_depth_image(depth_array, save_path, max_depth=20.0):
