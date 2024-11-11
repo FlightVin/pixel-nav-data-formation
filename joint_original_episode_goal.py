@@ -15,41 +15,55 @@ from habitat.utils.geometry_utils import quaternion_from_coeff, quaternion_to_li
 import habitat_sim
 
 
-def find_shortest_path(sim, p1, p2):
-    # path = habitat_sim.ShortestPath()
-    # path.requested_start = p1
-    # path.requested_end = p2
-    # found_path = sim.pathfinder.find_path(path)
+# def find_shortest_path(sim, p1, p2):
+#     # path = habitat_sim.ShortestPath()
+#     # path.requested_start = p1
+#     # path.requested_end = p2
+#     # found_path = sim.pathfinder.find_path(path)
 
-    # # print(sim.agents[0])
-    # # raise
+#     # # print(sim.agents[0])
+#     # # raise
 
-    # ggf = habitat_sim.nav.GreedyGeodesicFollower(sim.pathfinder, sim.agents[0])
-    # return len(ggf.find_path(p2)), None
+#     # ggf = habitat_sim.nav.GreedyGeodesicFollower(sim.pathfinder, sim.agents[0])
+#     # return len(ggf.find_path(p2)), None
 
-    # return path.geodesic_distance, path.points
+#     # return path.geodesic_distance, path.points
 
+#     path = habitat_sim.ShortestPath()
+#     path.requested_start = p1
+#     path.requested_end = p2
+#     found_path = sim.pathfinder.find_path(path)
+#     return path.geodesic_distance, path.points
+#     # geod_distance = sim.geodesic_distance(p1, p2)
+#     # return geod_distance, None
+#     # if geod_distance >= 4:
+#     #     return geod_distance, None
+#     # print(np.linalg.norm(np.array(p1) - np.array(p2)))
+#     # print(geod_distance)
+#     return min(geod_distance, np.linalg.norm(np.array(p1) - np.array(p2))), None
+
+
+def find_shortest_path(sim, p1, p2, threshold=4):
     path = habitat_sim.ShortestPath()
     path.requested_start = p1
     path.requested_end = p2
-    found_path = sim.pathfinder.find_path(path)
-    return path.geodesic_distance, path.points
-    # geod_distance = sim.geodesic_distance(p1, p2)
-    # return geod_distance, None
-    # if geod_distance >= 4:
-    #     return geod_distance, None
-    # print(np.linalg.norm(np.array(p1) - np.array(p2)))
-    # print(geod_distance)
-    return min(geod_distance, np.linalg.norm(np.array(p1) - np.array(p2))), None
+    _ = sim.pathfinder.find_path(path)
+
+    geodesic_distance = path.geodesic_distance
+    if geodesic_distance >= threshold:
+        return geodesic_distance, path.points
+
+    euclidean_distance = np.linalg.norm(np.array(p1) - np.array(p2))
+    return (geodesic_distance + euclidean_distance) / 2, path.points
 
 
 def get_pathlength_GT_modified(
-    sim, habitat_config, depth, semantic, goal_position, ignored_objs=[]
+    sim, habitat_config, depth, semantic, goal_position, goal_object_id, ignored_objs=[]
 ):
     H, W = depth.shape
     K = habitat_camera_intrinsic(habitat_config)
     instances = np.unique(semantic)
-    numSamples = 50
+    numSamples = 70
     areaThresh = int(np.ceil(0.0005 * H * W))
 
     position = sim.get_agent_state().position
@@ -103,6 +117,16 @@ def get_pathlength_GT_modified(
     plsImg = np.zeros([H, W])
     pl_min_insta = []
 
+    def heuristic_minimum(pls_insta, distsMask_insta, num_values=10):
+        masked_values = np.sort(pls_insta[distsMask_insta])
+        filtered_values = masked_values[np.isfinite(masked_values)]
+        if len(filtered_values) == 0:
+            return np.inf
+        first_n_values = masked_values[:num_values]
+        weights = np.exp(-np.arange(len(first_n_values)))
+        weighted_average = np.average(first_n_values, weights=weights)
+        return weighted_average
+
     for i in range(len(instances)):
         subInds = inds == i
         pls_insta = pls[subInds]
@@ -111,9 +135,16 @@ def get_pathlength_GT_modified(
         if distsMask_insta.sum() == 0 or instances[i] in ignored_objs:
             pl_min = np.inf
         else:
-            pl_min = np.min(pls_insta[distsMask_insta])
+            # pl_min = np.min(pls_insta[distsMask_insta])
+            pl_min = heuristic_minimum(pls_insta, distsMask_insta)
+            if instances[i] == goal_object_id:
+                pl_min = 0.75
 
-        if pl_min == np.inf or len(pointsAll[i]) <= areaThresh or instances[i] == 0:
+        if (
+            pl_min == np.inf
+            or (len(pointsAll[i]) <= areaThresh and instances[i] != goal_object_id)
+            or instances[i] == 0
+        ):
             pl_min = 99
 
         pl_min_insta.append(pl_min)
@@ -146,7 +177,30 @@ def main(args):
     # pprint(instance_id_to_name)
     # raise
 
+    navmesh_settings = habitat_sim.NavMeshSettings()
+    navmesh_settings.set_defaults()
+    navmesh_settings.agent_radius = args.robot_radius / 5
+    navmesh_settings.cell_height = 0.05
+    navmesh_settings.cell_size = 0.05
+    navmesh_success = env.sim.recompute_navmesh(env.sim.pathfinder, navmesh_settings)
+
+    assert navmesh_success == True
+
     ignored_objs_data = {
+        "ceiling_1": "ceiling",
+        "ceiling_239": "ceiling",
+        "ceiling_296": "ceiling",
+        "ceiling_374": "ceiling",
+        "ceiling_380": "ceiling",
+        "ceiling_419": "ceiling",
+        "ceiling_422": "ceiling",
+        "ceiling_443": "ceiling",
+        "ceiling_462": "ceiling",
+        "ceiling_540": "ceiling",
+        "ceiling_55": "ceiling",
+        "ceiling_584": "ceiling",
+        "ceiling_649": "ceiling",
+        "ceiling_65": "ceiling",
         "floor mat_271": "floor mat",
         "floor mat_293": "floor mat",
         "floor mat_294": "floor mat",
@@ -185,12 +239,26 @@ def main(args):
         except Exception as e:
             print(f"An error occurred while resetting environment: {e}")
             continue
+        # Get episode goal
+        unsnapped_goal_position = env.current_episode.goals[0].position
+
+        # from pprint import pprint
+
+        # pprint(f"We have {len(env.current_episode.goals)} goals")
+        # pprint("The first goal is")
+        # pprint(env.current_episode.goals[0])
+        # raise
+
+        # snap it to navigable places
+        goal_position = env.sim.pathfinder.snap_point(unsnapped_goal_position)
+        goal_object_id = env.current_episode.goals[0].object_id
+
+        if goal_object_id in ignored_objs:
+            continue
 
         episode_dir = create_episode_directory(output_dir, episode_counter)
         timesteps = 0
 
-        # Get episode goal
-        goal_position = env.current_episode.goals[0].position
         # Create goal mask at the projected goal position
         camera_int = habitat_camera_intrinsic(habitat_config)
         camera_pos = env.sim.get_agent_state().sensor_states["rgb"].position
@@ -294,6 +362,7 @@ def main(args):
                     start_depth,
                     start_semantic,
                     goal_position,
+                    goal_object_id,
                     ignored_objs,
                 )
                 save_pathlength_image(
@@ -345,6 +414,7 @@ def main(args):
                         current_depth,
                         current_semantic,
                         goal_position,
+                        goal_object_id,
                         ignored_objs,
                     )
                     # print(np.unique(current_plsImg))
@@ -397,7 +467,7 @@ if __name__ == "__main__":
         "--split", type=str, default="train", help="Split (train/val/valmini)"
     )
     parser.add_argument("--num_sampled_episodes", "-nse", type=int, default=10)
-    parser.add_argument("--max_timesteps", type=int, default=64)
+    parser.add_argument("--max_timesteps", type=int, default=128)
     parser.add_argument("--min_timesteps", type=int, default=5)
     parser.add_argument("--mask_shape", type=int, default=3)
     parser.add_argument(

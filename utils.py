@@ -8,7 +8,6 @@ from habitat.config.default import get_config
 import random
 from PIL import Image
 
-
 UTILS_SEED = 42
 SEMANTIC_COLOR_MAP = {}
 
