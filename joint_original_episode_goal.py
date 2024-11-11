@@ -147,7 +147,23 @@ def main(args):
 
     assert navmesh_success == True
 
-    ignored_objs = [int(key.split("_")[1]) for key in IGNORED_OBJECTS_DATA.keys()]
+    # semantic_scene = env.sim.semantic_scene
+    # instance_id_to_name = {}
+    # for obj in semantic_scene.objects:
+    #     if obj is not None:
+    #         instance_id_to_name[obj.id] = obj.category.name()
+    # print("Semantic Instance Mapping:")
+    # from pprint import pprint
+
+    # pprint(instance_id_to_name)
+    # raise
+
+    if "val" in args.stage:
+        ignored_objects_data = VAL_IGNORED_OBJECTS_DATA
+    else:
+        ignored_objects_data = TRAIN_IGNORED_OBJECTS_DATA
+
+    ignored_objs = [int(key.split("_")[1]) for key in ignored_objects_data.keys()]
 
     follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
