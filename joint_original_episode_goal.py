@@ -11,36 +11,7 @@ from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
 import time
 from pathlib import Path
 from tqdm import tqdm
-from habitat.utils.geometry_utils import quaternion_from_coeff, quaternion_to_list
 import habitat_sim
-
-
-# def find_shortest_path(sim, p1, p2):
-#     # path = habitat_sim.ShortestPath()
-#     # path.requested_start = p1
-#     # path.requested_end = p2
-#     # found_path = sim.pathfinder.find_path(path)
-
-#     # # print(sim.agents[0])
-#     # # raise
-
-#     # ggf = habitat_sim.nav.GreedyGeodesicFollower(sim.pathfinder, sim.agents[0])
-#     # return len(ggf.find_path(p2)), None
-
-#     # return path.geodesic_distance, path.points
-
-#     path = habitat_sim.ShortestPath()
-#     path.requested_start = p1
-#     path.requested_end = p2
-#     found_path = sim.pathfinder.find_path(path)
-#     return path.geodesic_distance, path.points
-#     # geod_distance = sim.geodesic_distance(p1, p2)
-#     # return geod_distance, None
-#     # if geod_distance >= 4:
-#     #     return geod_distance, None
-#     # print(np.linalg.norm(np.array(p1) - np.array(p2)))
-#     # print(geod_distance)
-#     return min(geod_distance, np.linalg.norm(np.array(p1) - np.array(p2))), None
 
 
 def find_shortest_path(sim, p1, p2, threshold=4):
@@ -166,17 +137,6 @@ def main(args):
     env = habitat.Env(habitat_config)
     env.seed(UTILS_SEED)
 
-    # semantic_scene = env.sim.semantic_scene
-    # instance_id_to_name = {}
-    # for obj in semantic_scene.objects:
-    #     if obj is not None:
-    #         instance_id_to_name[obj.id] = obj.category.name()
-    # print("Semantic Instance Mapping:")
-    # from pprint import pprint
-
-    # pprint(instance_id_to_name)
-    # raise
-
     navmesh_settings = habitat_sim.NavMeshSettings()
     navmesh_settings.set_defaults()
     navmesh_settings.agent_radius = args.robot_radius / 5
@@ -186,40 +146,7 @@ def main(args):
 
     assert navmesh_success == True
 
-    ignored_objs_data = {
-        "ceiling_1": "ceiling",
-        "ceiling_239": "ceiling",
-        "ceiling_296": "ceiling",
-        "ceiling_374": "ceiling",
-        "ceiling_380": "ceiling",
-        "ceiling_419": "ceiling",
-        "ceiling_422": "ceiling",
-        "ceiling_443": "ceiling",
-        "ceiling_462": "ceiling",
-        "ceiling_540": "ceiling",
-        "ceiling_55": "ceiling",
-        "ceiling_584": "ceiling",
-        "ceiling_649": "ceiling",
-        "ceiling_65": "ceiling",
-        "floor mat_271": "floor mat",
-        "floor mat_293": "floor mat",
-        "floor mat_294": "floor mat",
-        "floor_134": "floor",
-        "floor_289": "floor",
-        "floor_292": "floor",
-        "floor_31": "floor",
-        "floor_362": "floor",
-        "floor_363": "floor",
-        "floor_375": "floor",
-        "floor_40": "floor",
-        "floor_408": "floor",
-        "floor_444": "floor",
-        "floor_532": "floor",
-        "floor_549": "floor",
-        "floor_591": "floor",
-        "floor_644": "floor",
-    }
-    ignored_objs = [int(key.split("_")[1]) for key in ignored_objs_data.keys()]
+    ignored_objs = [int(key.split("_")[1]) for key in IGNORED_OBJECTS_DATA.keys()]
 
     follower = ShortestPathFollower(env.sim, goal_radius=0.5, return_one_hot=False)
 
@@ -239,15 +166,9 @@ def main(args):
         except Exception as e:
             print(f"An error occurred while resetting environment: {e}")
             continue
+
         # Get episode goal
         unsnapped_goal_position = env.current_episode.goals[0].position
-
-        # from pprint import pprint
-
-        # pprint(f"We have {len(env.current_episode.goals)} goals")
-        # pprint("The first goal is")
-        # pprint(env.current_episode.goals[0])
-        # raise
 
         # snap it to navigable places
         goal_position = env.sim.pathfinder.snap_point(unsnapped_goal_position)
@@ -417,7 +338,6 @@ def main(args):
                         goal_object_id,
                         ignored_objs,
                     )
-                    # print(np.unique(current_plsImg))
 
                     pathlength_image_pil_obj = save_pathlength_image(
                         current_plsImg,

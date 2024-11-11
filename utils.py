@@ -306,3 +306,38 @@ def save_multiple_images_as_row(images, save_path):
         new_image.save(save_path)
 
     return new_image
+
+
+IGNORED_OBJECTS_DATA = {
+    "ceiling_1": "ceiling",
+    "ceiling_239": "ceiling",
+    "ceiling_296": "ceiling",
+    "ceiling_374": "ceiling",
+    "ceiling_380": "ceiling",
+    "ceiling_419": "ceiling",
+    "ceiling_422": "ceiling",
+    "ceiling_443": "ceiling",
+    "ceiling_462": "ceiling",
+    "ceiling_540": "ceiling",
+    "ceiling_55": "ceiling",
+    "ceiling_584": "ceiling",
+    "ceiling_649": "ceiling",
+    "ceiling_65": "ceiling",
+    "floor mat_271": "floor mat",
+    "floor mat_293": "floor mat",
+    "floor mat_294": "floor mat",
+    "floor_134": "floor",
+    "floor_289": "floor",
+    "floor_292": "floor",
+    "floor_31": "floor",
+    "floor_362": "floor",
+    "floor_363": "floor",
+    "floor_375": "floor",
+    "floor_40": "floor",
+    "floor_408": "floor",
+    "floor_444": "floor",
+    "floor_532": "floor",
+    "floor_549": "floor",
+    "floor_591": "floor",
+    "floor_644": "floor",
+}
