@@ -13,6 +13,7 @@ from pathlib import Path
 from tqdm import tqdm
 import h5py
 import habitat_sim
+import traceback
 
 
 def find_shortest_path(sim, p1, p2, threshold=4):
@@ -158,10 +159,14 @@ def main(args):
     # pprint(instance_id_to_name)
     # raise
 
-    if "val" in args.stage:
+    if args.stage == "val_mini":
+        ignored_objects_data = MINI_VAL_IGNORED_OBJECTS_DATA
+    elif args.stage == "val":
         ignored_objects_data = VAL_IGNORED_OBJECTS_DATA
-    else:
+    elif args.stage == "train":
         ignored_objects_data = TRAIN_IGNORED_OBJECTS_DATA
+    else:
+        raise RuntimeError(f"Unknown stage {args.stage}")
 
     ignored_objs = [int(key.split("_")[1]) for key in ignored_objects_data.keys()]
 
@@ -185,239 +190,247 @@ def main(args):
 
     with h5py.File(hdf5_file_path, "w") as hdf:
         while episode_counter < args.num_saved_episodes:
-            start_time = time.time()
-
             try:
-                start_obs = env.reset()
-            except Exception as e:
-                print(f"An error occurred while resetting environment: {e}")
-                continue
+                start_time = time.time()
 
-            # Get episode goal
-            current_goal_obj = random.choice(env.current_episode.goals)
-            unsnapped_goal_position = current_goal_obj.position
+                try:
+                    start_obs = env.reset()
+                except Exception as e:
+                    print(f"An error occurred while resetting environment: {e}")
+                    continue
 
-            # snap it to navigable places
-            goal_position = env.sim.pathfinder.snap_point(unsnapped_goal_position)
-            goal_object_id = current_goal_obj.object_id
+                # Get episode goal
+                current_goal_obj = random.choice(env.current_episode.goals)
+                unsnapped_goal_position = current_goal_obj.position
 
-            if goal_object_id in ignored_objs:
-                continue
+                # snap it to navigable places
+                goal_position = env.sim.pathfinder.snap_point(unsnapped_goal_position)
+                goal_object_id = current_goal_obj.object_id
 
-            # episode_dir = create_episode_directory(output_dir, episode_counter)
-            timesteps = 0
+                if goal_object_id in ignored_objs:
+                    continue
 
-            # Create goal mask at the projected goal position
-            camera_int = habitat_camera_intrinsic(habitat_config)
-            camera_pos = env.sim.get_agent_state().sensor_states["rgb"].position
-            camera_rot = env.sim.get_agent_state().sensor_states["rgb"].rotation
+                # episode_dir = create_episode_directory(output_dir, episode_counter)
+                timesteps = 0
 
-            # Project 3D goal point to 2D image coordinates
-            goal_point_homogeneous = np.array(
-                [goal_position[0], goal_position[1], goal_position[2], 1.0]
-            )
-            camera_matrix = np.eye(4)
-            camera_matrix[:3, :3] = quaternion.as_rotation_matrix(camera_rot)
-            camera_matrix[:3, 3] = camera_pos
-            goal_camera = np.linalg.inv(camera_matrix) @ goal_point_homogeneous
-            goal_camera = goal_camera[:3] / goal_camera[3]
+                # Create goal mask at the projected goal position
+                camera_int = habitat_camera_intrinsic(habitat_config)
+                camera_pos = env.sim.get_agent_state().sensor_states["rgb"].position
+                camera_rot = env.sim.get_agent_state().sensor_states["rgb"].rotation
 
-            # if goal_camera[2] <= 0:  # Goal is behind camera
-            #     print("Goal is behind camera, skipping episode")
-            #     continue
-
-            goal_pixel = camera_int @ goal_camera[:3]
-            goal_pixel = goal_pixel / goal_pixel[2]
-            goal_x, goal_z = int(goal_pixel[0]), int(goal_pixel[1])
-
-            # Check if goal is in frame
-            # if (
-            #     goal_x < 0
-            #     or goal_x >= start_obs["rgb"].shape[1]
-            #     or goal_z < 0
-            #     or goal_z >= start_obs["rgb"].shape[0]
-            # ):
-            #     print("Goal not in camera frame, skipping episode")
-            #     continue
-
-            goal_mask = create_target_mask(
-                goal_x, goal_z, args.mask_shape, start_obs["depth"].shape
-            )
-
-            best_action = follower.get_next_action(goal_position)
-            if best_action == 0:
-                print(f"Rejected the current goal with best-action {best_action}")
-                continue
-
-            start_rgb = start_obs["rgb"]
-            start_semantic = np.squeeze(start_obs["semantic"])
-            start_depth = np.squeeze(start_obs["depth"])
-
-            last_best_action = None
-
-            (
-                rgb_data,
-                depth_data,
-                semantic_data,
-                normed_goal_point_position_data,
-                action_data,
-                pls_data,
-            ) = ([], [], [], [], [], [])
-
-            while True:
-                assert best_action is not None and last_best_action != 0
-
-                # NOTE: The `i-th` action leads to the `i-th` observation.
-
-                action_data.append(best_action)
-                current_obs = env.step(best_action)
-
-                # Accessing current observations
-                rgb_data.append(current_obs["rgb"])
-                semantic_data.append(np.squeeze(current_obs["semantic"]))
-                depth_data.append(np.squeeze(current_obs["depth"]))
-
-                # Project goal into current frame
-                goal_point_norm_x, goal_point_norm_z = (
-                    get_normalized_goal_point_location_in_current_obs(
-                        habitat_config, env, goal_position
-                    )
+                # Project 3D goal point to 2D image coordinates
+                goal_point_homogeneous = np.array(
+                    [goal_position[0], goal_position[1], goal_position[2], 1.0]
                 )
-                normed_goal_point_position_data.append(
-                    [goal_point_norm_x, goal_point_norm_z]
+                camera_matrix = np.eye(4)
+                camera_matrix[:3, :3] = quaternion.as_rotation_matrix(camera_rot)
+                camera_matrix[:3, 3] = camera_pos
+                goal_camera = np.linalg.inv(camera_matrix) @ goal_point_homogeneous
+                goal_camera = goal_camera[:3] / goal_camera[3]
+
+                # if goal_camera[2] <= 0:  # Goal is behind camera
+                #     print("Goal is behind camera, skipping episode")
+                #     continue
+
+                goal_pixel = camera_int @ goal_camera[:3]
+                goal_pixel = goal_pixel / goal_pixel[2]
+                goal_x, goal_z = int(goal_pixel[0]), int(goal_pixel[1])
+
+                # Check if goal is in frame
+                # if (
+                #     goal_x < 0
+                #     or goal_x >= start_obs["rgb"].shape[1]
+                #     or goal_z < 0
+                #     or goal_z >= start_obs["rgb"].shape[0]
+                # ):
+                #     print("Goal not in camera frame, skipping episode")
+                #     continue
+
+                goal_mask = create_target_mask(
+                    goal_x, goal_z, args.mask_shape, start_obs["depth"].shape
                 )
 
-                timesteps += 1
+                best_action = follower.get_next_action(goal_position)
+                if best_action == 0:
+                    print(f"Rejected the current goal with best-action {best_action}")
+                    continue
 
-                if not (env.episode_over or timesteps >= args.max_timesteps):
-                    last_best_action = best_action
-                    best_action = follower.get_next_action(goal_position)
-                else:
-                    print(f"Trajectory ended in {timesteps} steps")
-                    if timesteps < args.min_timesteps:
-                        print(
-                            f"{timesteps} less than min. timesteps of {args.min_timesteps}"
+                start_rgb = start_obs["rgb"]
+                start_semantic = np.squeeze(start_obs["semantic"])
+                start_depth = np.squeeze(start_obs["depth"])
+
+                last_best_action = None
+
+                (
+                    rgb_data,
+                    depth_data,
+                    semantic_data,
+                    normed_goal_point_position_data,
+                    action_data,
+                    pls_data,
+                ) = ([], [], [], [], [], [])
+
+                while True:
+                    assert best_action is not None and last_best_action != 0
+
+                    # NOTE: The `i-th` action leads to the `i-th` observation.
+
+                    action_data.append(best_action)
+                    current_obs = env.step(best_action)
+
+                    # Accessing current observations
+                    rgb_data.append(current_obs["rgb"])
+                    semantic_data.append(np.squeeze(current_obs["semantic"]))
+                    depth_data.append(np.squeeze(current_obs["depth"]))
+
+                    # Project goal into current frame
+                    goal_point_norm_x, goal_point_norm_z = (
+                        get_normalized_goal_point_location_in_current_obs(
+                            habitat_config, env, goal_position
                         )
-                        break
-
-                    # Save initial data
-                    # save_rgb_image(
-                    #     apply_mask_to_image(start_rgb, goal_mask),
-                    #     os.path.join(episode_dir, "start_rgb_image_with_mask.png"),
-                    # )
-                    _, _, start_plsImgDirect = get_pathlength_GT_modified(
-                        env.sim,
-                        habitat_config,
-                        start_depth,
-                        start_semantic,
-                        goal_position,
-                        goal_object_id,
-                        ignored_objs,
+                    )
+                    normed_goal_point_position_data.append(
+                        [goal_point_norm_x, goal_point_norm_z]
                     )
 
-                    start_plsImg = convert_direct_pls_image_to_uint(start_plsImgDirect)
-                    # save_pathlength_image(
-                    #     start_plsImg,
-                    #     os.path.join(episode_dir, "start_pls_image.png"),
-                    # )
+                    timesteps += 1
 
-                    # Save trajectory data
-                    for timestep_idx, (
-                        current_rgb,
-                        current_depth,
-                        current_semantic,
-                        current_normed_goal_pt_loc,
-                    ) in enumerate(
-                        zip(
-                            rgb_data,
-                            depth_data,
-                            semantic_data,
-                            normed_goal_point_position_data,
-                        )
-                    ):
-                        # current_goal_pt_loc = unnormalize_goal_point(
-                        #     current_normed_goal_pt_loc[0],
-                        #     current_normed_goal_pt_loc[1],
-                        #     current_rgb.shape,
-                        # )
-                        # current_goal_point_mask = create_target_mask(
-                        #     current_goal_pt_loc[0],
-                        #     current_goal_pt_loc[1],
-                        #     args.mask_shape,
-                        #     current_depth.shape,
-                        # )
-                        # current_rgb_with_goal_mask = apply_mask_to_image(
-                        #     current_rgb, current_goal_point_mask
-                        # )
-                        # rgb_image_pil_obj = save_rgb_image(
-                        #     current_rgb_with_goal_mask,
-                        #     None,
-                        # )
+                    if not (env.episode_over or timesteps >= args.max_timesteps):
+                        last_best_action = best_action
+                        best_action = follower.get_next_action(goal_position)
+                    else:
+                        print(f"Trajectory ended in {timesteps} steps")
+                        if timesteps < args.min_timesteps:
+                            print(
+                                f"{timesteps} less than min. timesteps of {args.min_timesteps}"
+                            )
+                            break
 
-                        # semantic_image_pil_obj = save_semantic_image(
-                        #     current_semantic,
-                        #     None,
+                        # Save initial data
+                        # save_rgb_image(
+                        #     apply_mask_to_image(start_rgb, goal_mask),
+                        #     os.path.join(episode_dir, "start_rgb_image_with_mask.png"),
                         # )
-
-                        _, _, current_plsImgDirect = get_pathlength_GT_modified(
+                        _, _, start_plsImgDirect = get_pathlength_GT_modified(
                             env.sim,
                             habitat_config,
-                            current_depth,
-                            current_semantic,
+                            start_depth,
+                            start_semantic,
                             goal_position,
                             goal_object_id,
                             ignored_objs,
                         )
 
-                        current_plsImg = convert_direct_pls_image_to_uint(
-                            current_plsImgDirect
+                        start_plsImg = convert_direct_pls_image_to_uint(
+                            start_plsImgDirect
                         )
-
-                        pls_data.append(current_plsImg)
-                        # pathlength_image_pil_obj = save_pathlength_image(
-                        #     current_plsImg,
-                        #     None,
+                        # save_pathlength_image(
+                        #     start_plsImg,
+                        #     os.path.join(episode_dir, "start_pls_image.png"),
                         # )
 
-                        # save_multiple_images_as_row(
-                        #     [
-                        #         rgb_image_pil_obj,
-                        #         semantic_image_pil_obj,
-                        #         pathlength_image_pil_obj,
-                        #     ],
-                        #     os.path.join(
-                        #         episode_dir, f"observation_{timestep_idx:05d}.png"
-                        #     ),
-                        # )
+                        # Save trajectory data
+                        for timestep_idx, (
+                            current_rgb,
+                            current_depth,
+                            current_semantic,
+                            current_normed_goal_pt_loc,
+                        ) in enumerate(
+                            zip(
+                                rgb_data,
+                                depth_data,
+                                semantic_data,
+                                normed_goal_point_position_data,
+                            )
+                        ):
+                            # current_goal_pt_loc = unnormalize_goal_point(
+                            #     current_normed_goal_pt_loc[0],
+                            #     current_normed_goal_pt_loc[1],
+                            #     current_rgb.shape,
+                            # )
+                            # current_goal_point_mask = create_target_mask(
+                            #     current_goal_pt_loc[0],
+                            #     current_goal_pt_loc[1],
+                            #     args.mask_shape,
+                            #     current_depth.shape,
+                            # )
+                            # current_rgb_with_goal_mask = apply_mask_to_image(
+                            #     current_rgb, current_goal_point_mask
+                            # )
+                            # rgb_image_pil_obj = save_rgb_image(
+                            #     current_rgb_with_goal_mask,
+                            #     None,
+                            # )
 
-                    episode_group = hdf.create_group(f"episode_{episode_counter}")
+                            # semantic_image_pil_obj = save_semantic_image(
+                            #     current_semantic,
+                            #     None,
+                            # )
 
-                    # save the data
-                    episode_group.create_dataset("start_rgb_image", data=start_rgb)
-                    episode_group.create_dataset("start_pls_image", data=start_plsImg)
-                    episode_group.create_dataset("rgb_images", data=rgb_data)
-                    episode_group.create_dataset("actions", data=action_data)
-                    episode_group.create_dataset("pls_images", data=pls_data)
+                            _, _, current_plsImgDirect = get_pathlength_GT_modified(
+                                env.sim,
+                                habitat_config,
+                                current_depth,
+                                current_semantic,
+                                goal_position,
+                                goal_object_id,
+                                ignored_objs,
+                            )
 
-                    episode_counter += 1
-                    pbar.update(1)
+                            current_plsImg = convert_direct_pls_image_to_uint(
+                                current_plsImgDirect
+                            )
 
-                    end_time = time.time()
-                    time_taken = end_time - start_time
-                    total_time_taken = end_time - time_before_loop
-                    total_hours, rem = divmod(total_time_taken, 3600)
-                    total_minutes, total_seconds = divmod(rem, 60)
+                            pls_data.append(current_plsImg)
+                            # pathlength_image_pil_obj = save_pathlength_image(
+                            #     current_plsImg,
+                            #     None,
+                            # )
 
-                    print(
-                        f"Done with episode {episode_counter} out of {args.num_saved_episodes} total"
-                    )
-                    print(f"Time taken for this episode: {time_taken:.2f} seconds")
-                    print(
-                        f"Total time taken: {int(total_hours)} hours, {int(total_minutes)} minutes, {int(total_seconds)} seconds"
-                    )
-                    print()
-                    break
+                            # save_multiple_images_as_row(
+                            #     [
+                            #         rgb_image_pil_obj,
+                            #         semantic_image_pil_obj,
+                            #         pathlength_image_pil_obj,
+                            #     ],
+                            #     os.path.join(
+                            #         episode_dir, f"observation_{timestep_idx:05d}.png"
+                            #     ),
+                            # )
 
+                        episode_group = hdf.create_group(f"episode_{episode_counter}")
+
+                        # save the data
+                        episode_group.create_dataset("start_rgb_image", data=start_rgb)
+                        episode_group.create_dataset(
+                            "start_pls_image", data=start_plsImg
+                        )
+                        episode_group.create_dataset("rgb_images", data=rgb_data)
+                        episode_group.create_dataset("actions", data=action_data)
+                        episode_group.create_dataset("pls_images", data=pls_data)
+
+                        episode_counter += 1
+                        pbar.update(1)
+
+                        end_time = time.time()
+                        time_taken = end_time - start_time
+                        total_time_taken = end_time - time_before_loop
+                        total_hours, rem = divmod(total_time_taken, 3600)
+                        total_minutes, total_seconds = divmod(rem, 60)
+
+                        print(
+                            f"Done with episode {episode_counter} out of {args.num_saved_episodes} total"
+                        )
+                        print(f"Time taken for this episode: {time_taken:.2f} seconds")
+                        print(
+                            f"Total time taken: {int(total_hours)} hours, {int(total_minutes)} minutes, {int(total_seconds)} seconds"
+                        )
+                        print()
+                        break
+            except Exception as e:
+                print("An error occurred:", e)
+                traceback.print_exc()
+                continue
     print(f"All episodes saved to {hdf5_file_path}")
     env.close()
 

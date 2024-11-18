@@ -292,7 +292,7 @@ def save_multiple_images_as_row(images, save_path):
     return new_image
 
 
-VAL_IGNORED_OBJECTS_DATA = {
+MINI_VAL_IGNORED_OBJECTS_DATA = {
     "ceiling_1": "ceiling",
     "ceiling_239": "ceiling",
     "ceiling_296": "ceiling",
@@ -324,6 +324,41 @@ VAL_IGNORED_OBJECTS_DATA = {
     "floor_549": "floor",
     "floor_591": "floor",
     "floor_644": "floor",
+}
+
+VAL_IGNORED_OBJECTS_DATA = {
+    "floor_22": "floor",
+    "floor_267": "floor",
+    "floor_290": "floor",
+    "floor_318": "floor",
+    "floor_367": "floor",
+    "floor_402": "floor",
+    "floor_412": "floor",
+    "floor_426": "floor",
+    "floor_490": "floor",
+    "floor_510": "floor",
+    "floor_536": "floor",
+    "floor_69": "floor",
+    "floor_97": "floor",
+    "ceiling_1": "ceiling",
+    "ceiling_170": "ceiling",
+    "ceiling_227": "ceiling",
+    "ceiling_263": "ceiling",
+    "ceiling_288": "ceiling",
+    "ceiling_307": "ceiling",
+    "ceiling_361": "ceiling",
+    "ceiling_37": "ceiling",
+    "ceiling_38": "ceiling",
+    "ceiling_389": "ceiling",
+    "ceiling_414": "ceiling",
+    "ceiling_461": "ceiling",
+    "ceiling_463": "ceiling",
+    "ceiling_496": "ceiling",
+    "ceiling_497": "ceiling",
+    "ceiling_503": "ceiling",
+    "ceiling_506": "ceiling",
+    "ceiling_511": "ceiling",
+    "ceiling_537": "ceiling",
 }
 
 TRAIN_IGNORED_OBJECTS_DATA = {
