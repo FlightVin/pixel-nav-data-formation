@@ -2,7 +2,7 @@
 Code used to create dataset for pixel goals. Uses latest habitat lab version.
 """
 
-from utils import *
+from dat_formation_utils import *
 
 seed_everything(UTILS_SEED)
 

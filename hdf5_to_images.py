@@ -3,7 +3,7 @@ import h5py
 from PIL import Image
 import numpy as np
 from pathlib import Path
-from utils import *
+from dat_formation_utils import *
 
 
 def main(hdf5_file_path, output_dir):

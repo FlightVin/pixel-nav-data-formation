@@ -1,4 +1,4 @@
-from utils import *
+from dat_formation_utils import *
 
 seed_everything(UTILS_SEED)
 
@@ -22,7 +22,7 @@ from habitat.utils.geometry_utils import (
 from habitat.config.read_write import read_write
 import habitat_sim
 from habitat.config.default import get_config
-from utils import *
+from dat_formation_utils import *
 import magnum as mn
 from spatialmath import SE3
 from spatialmath.base import trnorm
